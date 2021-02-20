@@ -1,0 +1,286 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library("COVID19")
+library(tidyverse)
+library(shiny)
+library(shinydashboard)
+library(glue)
+library(shinyWidgets)
+library(plotly)
+library(data.table)
+```
+
+```{r}
+data <- covid19(raw=FALSE, verbose=FALSE)
+glimpse(data)
+```
+
+```{r}
+subset_data <- data %>% filter(id=='CAN')
+glimpse(subset_data)
+```
+```{r}
+statistics <- list(
+  "Daily cases" = "confirmed",
+  "Daily deaths" = "deaths",
+  "Daily tests" = "tests",
+  "Daily hospital admissions" = "hosp",
+  "Daily ICU admissions" = "icu"
+)
+```
+
+
+```{r}
+restrictions <- c("school_closing", 
+                  "workplace_closing", 
+                  "cancel_events", 
+                  "gatherings_restrictions", 
+                  "transport_closing", 
+                  "stay_home_restrictions", 
+                  "internal_movement_restrictions", 
+                  "international_movement_restrictions",
+                  "information_campaigns", 
+                  "testing_policy", 
+                  "contact_tracing")
+```
+
+```{r}
+school_closing_text <- list(
+  "Open schools",
+  "School closing recommended", 
+  "School closing required (partial)", 
+  "School closing required")
+workplace_closing_text <- list(
+  "Open workplaces",
+  "Workplace closing recommended", 
+  "Workplace closing required (partial)", 
+  "Workplace closing required (non-essential)")
+cancel_events_text <- list(
+  "Events maintained",
+  "Events cancelling recommended", 
+  "Events cancelled")
+gathering_restrictions_text <- list(
+  "Gatherings allowed",
+  "No gatherings above 1000 people",
+  "No gathering above 100 people",
+  "No gatherings above 10 people",
+  "No gatherings (<10 people)")
+transport_closing_text <- list(
+  "Public transports maintained",
+  "Public transports reduced",
+  "Public transports closed")
+stay_home_restrictions_text <- list(
+  "No lockdown",
+  "Staying home is recommended",
+  "Lockdown (soft)",
+  "Lockdown (hard)")
+internal_movement_restrictions_text <- list(
+  "No internal travel restriction",
+  "Internal travel reduced",
+  "Internal travel prohibited")
+international_movement_restrictions_text <- list(
+  "No international travel restriction",
+  "Screening (International travel)",
+  "High-risk regions quarantine (international)",
+  "High-risk regions ban (international)",
+  "Total border closure")
+information_campaigns_text <- list(
+  "No information campaign",
+  "Information campaign",
+  "Coordinated information campaign")
+testing_policy_text <- list(
+  "No testing policy",
+  "Partial testing of symptomatic people",
+  "Testing of symptomatic people",
+  "Open public testing")
+contact_tracing_text <- list(
+  "No contact tracing",
+  "Limited contact tracing",
+  "Comprehensive contact tracing")
+
+restrictions_categories=list(
+  "Lockdown"=list("stay_home_restrictions"),
+  "Travel&Transport"=list("international_movement_restrictions", 
+                          "internal_movement_restrictions", 
+                          "transport_closing"),
+  "Schools&Workplaces"=list("school_closing", 
+                            "workplace_closing"),
+  "Information&Testing"=list("information_campaigns", 
+                             "testing_policy", 
+                             "contact_tracing"),
+  "Events&Gatherings"=list("cancel_events", 
+                           "gathering_restrictions")
+)
+
+restrictions_level_to_text <- list(
+    "school_closing"=school_closing_text,
+    "workplace_closing"=workplace_closing_text,
+    "cancel_events"=cancel_events_text,
+    "gathering_restrictions"=gathering_restrictions_text,
+    "transport_closing"=transport_closing_text,
+    "stay_home_restrictions"=stay_home_restrictions_text,
+    "internal_movement_restrictions"=internal_movement_restrictions_text,
+    "international_movement_restrictions"=international_movement_restrictions_text,
+    "information_campaigns"=information_campaigns_text,
+    "testing_policy"=testing_policy_text,
+    "contact_tracing"=contact_tracing_text
+)
+
+colors = c("008000", "e6e6e6", "ffff66", "ff9900", "ff5050")
+colors_name = c("green", "gray", "yellow", "orange", "red")
+```
+
+```{r}
+all_data <- covid19(raw=FALSE, verbose=FALSE)
+
+moving_average <- function(x, n = 7){stats::filter(x, rep(1 / n, n), sides = 1)}
+```
+
+```{r}
+header <- dashboardHeader()
+
+sidebar <- dashboardSidebar(
+  collapsed = TRUE,
+  sidebarMenu(),
+  selectInput("country", "Select country",
+              choices=unique(data$id), selected="CAN"))
+
+body <- dashboardBody(fluidPage(
+  dropdownButton(
+    tags$h3("Plot options"),
+    selectInput(inputId = 'mainPlotY',
+                label = 'Show evolution of ',
+                selected = "Daily cases",
+                choices = c("Daily cases")),
+    dateInput(inputId = 'mainPlotDate',
+              label = 'See restrictions on',
+              value = max(all_data$date),
+              min = min(all_data$date),
+              max = max(all_data$date)),
+
+    circle = TRUE, status = "primary",
+    icon = icon("gear"), width = "300px",
+    tooltip = tooltipOptions(title = "Click for plot options")
+  ),
+  fluidRow(
+    div(class = "col-sm-6 col-md-6 col-lg-6",
+        box(width = '100%', plotOutput("main_plot"))),
+    div(class = "col-sm-6 col-md-6 col-lg-6",
+        box(width = '100%', uiOutput("restrictions")))
+  ),
+))
+
+ui <- dashboardPage(header, sidebar, body)
+```
+
+
+```{r}
+server <- function(input, output) {
+    
+    output$main_plot <- renderPlot({
+        data <- filter(all_data, id==input$country)
+        if (!is.null(display_restriction())){
+          levels = data[[display_restriction()]]+1
+          colors_label = unlist(restrictions_level_to_text[[display_restriction()]], recursive=FALSE)
+          breaks = as.character(1:length(colors_label))
+          colors = head(colors_name, length(colors_label))
+          names(colors) = breaks
+          plot <- data %>%
+            mutate(daily_cases = confirmed - lag(confirmed, default=confirmed[1])) %>%
+            mutate(daily_cases_smoothed = moving_average(daily_cases)) %>%
+            ggplot(aes(x=date, y=daily_cases_smoothed, colour=factor(levels), 
+                       group=c(0, cumsum(tail(levels != shift(levels, 1), -1))))) +
+            geom_line(size=1.5) +
+            scale_colour_manual(values=colors, breaks=breaks , labels=colors_label, 
+                                name="Restrictions", drop=FALSE) +
+            xlab("Date") + ylab("Daily cases") +
+            theme(legend.position="bottom",
+                  legend.text=element_text(size=12),
+                  axis.text=element_text(size=12),
+                  axis.title=element_text(size=14))
+        } else {
+          plot <- data %>% 
+            mutate(daily_cases = confirmed - lag(confirmed, default=confirmed[1])) %>%
+            mutate(daily_cases_smoothed = moving_average(daily_cases)) %>%
+            ggplot(aes(x=date, y=daily_cases_smoothed)) +
+            geom_line(size=1.5) +
+            xlab("Date") + ylab("Daily cases") +
+            theme(axis.text=element_text(size=12),
+                  axis.title=element_text(size=14))
+        }
+        plot <- plot + 
+          geom_vline(aes(xintercept=input$mainPlotDate)) +
+          geom_text(aes(x=input$mainPlotDate, y = 0, label=input$mainPlotDate, hjust=1.2, vjust=1))
+        return(plot)
+    })
+    
+    output$restrictions <- renderUI({
+        categories = tagList()
+        data <- filter(all_data, id==input$country)
+        date_row = filter(data, date==input$mainPlotDate)
+        i = 1
+        for (cat in names(restrictions_categories)){
+          buttons = tagList()
+          j = 1
+          for (name in restrictions_categories[[cat]]){
+            level = date_row[[name]]
+            if (!is.null(level)){
+              buttons[[j]] = actionButton(
+                glue("display_{name}"),
+                restrictions_level_to_text[[name]][[level+1]],
+                style=glue("color: #000; background-color: #{colors[[level+1]]}; border-color: #{colors[[level+1]]}")
+              )
+              j = j+1
+            }
+          }
+          categories[[i]] = box(title=cat, buttons)
+          i = i+1
+        }
+        categories
+    })
+    
+    display_restriction <- reactiveVal(NULL)
+    
+    # Observe event for all buttons
+    observe({
+      input_btn <- paste0("display_", names(restrictions_level_to_text))
+      lapply(input_btn,
+             function(x){
+               observeEvent(
+                 input[[x]],
+                 {
+                   name <- sub("display_", "", x)
+                   if (is.null(display_restriction()) || (display_restriction() != name)) {
+                     display_restriction(name)
+                   } else {
+                     display_restriction(NULL)
+                   }
+                 }
+               )
+             }
+      )
+    })
+}
+```
+
+
+```{r}
+shinyApp(ui, server)
+```
+
+
+
+
+
+
+
+
+
+
+
+
