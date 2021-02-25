@@ -13,6 +13,8 @@ library(glue)
 library(shinyWidgets)
 library(plotly)
 library(data.table)
+library(ggplot2)
+library(zoo)
 ```
 
 ```{r}
@@ -172,7 +174,33 @@ body <- dashboardBody(fluidPage(
         box(width = '100%', plotOutput("main_plot"))),
     div(class = "col-sm-6 col-md-6 col-lg-6",
         box(width = '100%', uiOutput("restrictions")))
+    #div(class = "col-sm-6 col-md-6 col-lg-6",
+        #box(width = '100%', plotOutput("forecasting")))
   ),
+  sidebarLayout(
+
+    # Sidebar with forecasting start date
+    sidebarPanel(
+      sliderInput("forecasting_start",
+                  "Forecasting start date:",
+                  min = as.Date("2020-03-01",format = "%Y-%m-%d"),
+                  max = max(all_data$date),
+                  value = as.Date("2020-08-01",format = "%Y-%m-%d")),
+    
+      sliderInput("forecasting_period",
+                  "Forecasting range:",
+                  min = 7,
+                  max = 60,
+                  value = 14)
+    ),
+    # Show the forecasting figure
+    mainPanel(
+      plotOutput("forecasting")
+    )
+  ),
+  fluidRow(
+      infoBoxOutput("forecast_box")
+  )
 ))
 
 ui <- dashboardPage(header, sidebar, body)
@@ -242,6 +270,57 @@ server <- function(input, output) {
           i = i+1
         }
         categories
+    })
+    
+    output$forecasting <- renderPlot({
+        data <- filter(all_data, id==input$country)
+        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
+        Re_start_date = input$forecasting_start
+        Re_end_date = Re_start_date + input$forecasting_period
+
+        # Use JRC method to estimate R number from historic data
+        estimation_base = data %>% filter(date == as.POSIXct("2020-03-01")) %>% pull(confirmed)
+        base_case = data %>% filter(date == Re_start_date) %>% pull(confirmed)
+        R_number = log(base_case, estimation_base)**(1/(as.numeric(Re_start_date - as.Date("2020-03-01",format = "%Y-%m-%d"))/7))
+
+        plot = data %>%
+            filter(date < Re_end_date) %>% 
+            mutate(date = as.Date(date,format = "%Y-%m-%d")) %>%
+            mutate(roll = rollmean(confirmed, k=7, na.pad = TRUE, align = "center"))  %>%
+            mutate(forecasting = ifelse(date < Re_start_date, roll, as.integer(base_case*(R_number**(as.numeric(date-as.Date(Re_start_date))/7))))) %>%
+    ggplot(aes(x=date, y=confirmed)) + 
+            geom_point(size = 0.1) + 
+            geom_line(aes(y=forecasting), color = "red") +
+            geom_line(aes(y=roll)) +
+            geom_vline(xintercept = as.numeric(as.Date(Re_start_date, format = "%Y-%m-%d")), colour = "blue", size = 1) + 
+            theme(legend.position="none") + theme_bw() + labs(y="Daily New Cases")+
+            theme(axis.text.x = element_text(angle=45, hjust = 1)) + 
+            scale_x_date(date_breaks = "28 days")
+        
+        return(plot)
+      
+    })
+    
+    output$forecast_box <- renderInfoBox({
+        data <- filter(all_data, id==input$country)
+        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
+        Re_start_date = input$forecasting_start
+        Re_end_date = Re_start_date + input$forecasting_period
+
+        # Use JRC method to estimate R number from historic data
+        estimation_base = data %>% filter(date == as.POSIXct("2020-03-01")) %>% pull(confirmed)
+        base_case = data %>% filter(date == Re_start_date) %>% pull(confirmed)
+        R_number = log(base_case, estimation_base)**(1/(as.numeric(Re_start_date - as.Date("2020-03-01",format = "%Y-%m-%d"))/7))
+        
+        # forecast 
+        forecast_number = as.integer(base_case*(R_number**(input$forecasting_period/7)))
+        actual_number = data %>% filter(date == Re_end_date) %>% pull(confirmed)
+      
+        infoBox(
+          "Forecasting", paste0("Forecasting cases: ", forecast_number, "\nActual cases: ", actual_number, "\n Differ:", forecast_number - actual_number), icon = icon("analytics", lib = "glyphicon"),
+          color = "yellow", width = 20
+        )
+       
     })
     
     display_restriction <- reactiveVal(NULL)
