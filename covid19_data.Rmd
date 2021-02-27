@@ -9,11 +9,12 @@ library("COVID19")
 library(tidyverse)
 library(shiny)
 library(shinydashboard)
+library(shinyjs)
 library(glue)
 library(shinyWidgets)
 library(plotly)
 library(data.table)
-library(ggplot2)
+library(highcharter)
 library(zoo)
 ```
 
@@ -140,7 +141,129 @@ colors_name = c("green", "gray", "yellow", "orange", "red")
 ```{r}
 all_data <- covid19(raw=FALSE, verbose=FALSE)
 
-moving_average <- function(x, n = 7){stats::filter(x, rep(1 / n, n), sides = 1)}
+moving_average <- function(x, n = 7){round(stats::filter(x, rep(1 / n, n), sides = 1))}
+```
+
+```{r}
+hc_theme_sparkline_vb <- function(...) {
+    
+    theme <- list(
+        chart = list(
+            backgroundColor = NULL,
+            margins = c(0, 0, 0, 0),
+            spacingTop = 0,
+            spacingRight = 0,
+            spacingBottom = 0,
+            spacingLeft = 0,
+            plotBorderWidth = 0,
+            borderWidth = 0,
+            style = list(overflow = "visible")
+        ),
+        xAxis = list(
+            visible = FALSE, 
+            endOnTick = FALSE, 
+            startOnTick = FALSE
+        ),
+        yAxis = list(
+            visible = FALSE,
+            endOnTick = FALSE, 
+            startOnTick = FALSE
+        ),
+        tooltip = list(
+            outside = FALSE,
+            shadow = FALSE,
+            borderColor = "transparent",
+            botderWidth = 0,
+            backgroundColor = "transparent",
+            style = list(textOutline = "5px white")
+        ),
+        plotOptions = list(
+            series = list(
+                marker = list(enabled = FALSE),
+                lineWidth = 2,
+                shadow = FALSE,
+                fillOpacity = 0.25,
+                color = "#FFFFFFBF",
+                fillColor = list(
+                    linearGradient = list(x1 = 0, y1 = 1, x2 = 0, y2 = 0),
+                    stops = list(
+                        list(0.00, "#FFFFFF00"),
+                        list(0.50, "#FFFFFF7F"),
+                        list(1.00, "#FFFFFFFF")
+                    )
+                )
+            )
+        ),
+        credits = list(
+            enabled = FALSE,
+            text = ""
+        )
+    )
+    
+    theme <- structure(theme, class = "hc_theme")
+    
+    if (length(list(...)) > 0) {
+        theme <- hc_theme_merge(
+            theme,
+            hc_theme(...)
+        )
+    }
+    
+    theme
+}
+
+valueBoxSpark <- function(value, title, sparkobj = NULL, subtitle, info = NULL, 
+                          icon = NULL, color = "aqua", width = 4, href = NULL){
+    
+    shinydashboard:::validateColor(color)
+    
+    if (!is.null(icon))
+        shinydashboard:::tagAssert(icon, type = "i")
+    
+    info_icon <- tags$small(
+        tags$i(
+            class = "fa fa-info-circle fa-lg",
+            title = info,
+            `data-toggle` = "tooltip",
+            style = "color: rgba(255, 255, 255, 0.75);"
+        ),
+        # bs3 pull-right 
+        # bs4 float-right
+        class = "pull-right float-right"
+    )
+    
+    boxContent <- div(
+        class = paste0("small-box bg-", color),
+        div(
+            class = "inner",
+            tags$small(title),
+            if (!is.null(sparkobj)) info_icon,
+            h3(value),
+            if (!is.null(sparkobj)) sparkobj,
+            p(subtitle)
+        ),
+        # bs3 icon-large
+        # bs4 icon
+        if (!is.null(icon)) div(class = "icon-large icon", icon, style = "z-index; 0")
+    )
+    
+    if (!is.null(href)) 
+        boxContent <- a(href = href, boxContent)
+    
+    div(
+        class = if (!is.null(width)) paste0("col-sm-", width), 
+        boxContent
+    )
+}
+
+arrow <- function(num) {
+    if(num < 0){
+        return(HTML("&darr;"))
+    }
+    else if(num>0){ return(HTML("&uarr;")) }
+    else return(HTML("-"))
+}
+
 ```
 
 ```{r}
@@ -152,66 +275,188 @@ sidebar <- dashboardSidebar(
   selectInput("country", "Select country",
               choices=unique(data$id), selected="CAN"))
 
-body <- dashboardBody(fluidPage(
-  dropdownButton(
-    tags$h3("Plot options"),
-    selectInput(inputId = 'mainPlotY',
-                label = 'Show evolution of ',
-                selected = "Daily cases",
-                choices = c("Daily cases")),
-    dateInput(inputId = 'mainPlotDate',
-              label = 'See restrictions on',
-              value = max(all_data$date),
-              min = min(all_data$date),
-              max = max(all_data$date)),
-
-    circle = TRUE, status = "primary",
-    icon = icon("gear"), width = "300px",
-    tooltip = tooltipOptions(title = "Click for plot options")
-  ),
-  fluidRow(
-    div(class = "col-sm-6 col-md-6 col-lg-6",
-        box(width = '100%', plotOutput("main_plot"))),
-    div(class = "col-sm-6 col-md-6 col-lg-6",
-        box(width = '100%', uiOutput("restrictions")))
-    #div(class = "col-sm-6 col-md-6 col-lg-6",
-        #box(width = '100%', plotOutput("forecasting")))
-  ),
-  sidebarLayout(
-
-    # Sidebar with forecasting start date
-    sidebarPanel(
-      sliderInput("forecasting_start",
+body <- dashboardBody(
+  useShinyjs(),
+  fluidPage(
+    fluidRow(
+      valueBoxOutput("vbox1"),
+      valueBoxOutput("vbox2"),
+      valueBoxOutput("vbox3")
+    ),
+    fluidRow(
+      div(
+        id='mainplot',
+        box(solidHeader = TRUE,
+          status = "info",
+          title = "Governement measures over time",
+          div(
+            dropdownButton(
+                tags$h3("Plot options"),
+                selectInput(inputId = 'mainPlotY',
+                            label = 'Show evolution of ',
+                            selected = "Daily cases",
+                            choices = c("Daily cases")),
+                dateInput(inputId = 'mainPlotDate',
+                          label = 'See restrictions on',
+                          value = max(all_data$date),
+                          min = min(all_data$date),
+                          max = max(all_data$date)),
+                circle = FALSE,
+                icon = icon("cog"),
+                tooltip = tooltipOptions(title = "Click for plot options")
+              ),
+            class = "box-tools pull-right",
+            id = "moveme1"
+          ),
+          plotOutput("main_plot")
+        )
+      ),
+      box(solidHeader = TRUE,
+        status = "info",
+        title = "Measures in place at selected date",
+        uiOutput("restrictions")
+      )
+    ),
+    fluidRow(
+      div(
+        id='predictions',
+        box(solidHeader = TRUE,
+          status = "info",
+          title = "Predictions",
+          div(
+            dropdownButton(
+                tags$h3("Plot options"),
+                dateInput("forecasting_start",
                   "Forecasting start date:",
-                  min = as.Date("2020-03-01",format = "%Y-%m-%d"),
+                  min = min(all_data$date),
                   max = max(all_data$date),
-                  value = as.Date("2020-08-01",format = "%Y-%m-%d")),
-    
-      sliderInput("forecasting_period",
+                  value = as.Date(max(all_data$date))-14),
+                sliderInput("forecasting_period",
                   "Forecasting range:",
                   min = 7,
                   max = 60,
-                  value = 14)
-    ),
-    # Show the forecasting figure
-    mainPanel(
-      plotOutput("forecasting")
-    )
-  ),
-  fluidRow(
+                  value = 14),
+                circle = FALSE,
+                icon = icon("cog"),
+                tooltip = tooltipOptions(title = "Click for plot options")
+              ),
+            class = "box-tools pull-right",
+            id = "moveme2"
+          ),
+          plotOutput("forecasting")
+        )
+      ),
       infoBoxOutput("forecast_box")
+    )
   )
-))
+)
 
 ui <- dashboardPage(header, sidebar, body)
 ```
 
-
 ```{r}
 server <- function(input, output) {
-    
+  
+    runjs("$('#mainplot .box-header').append($('#moveme1').detach())")
+    runjs("$('#predictions .box-header').append($('#moveme2').detach())") 
+  
+    reactive_data <- reactive({filter(all_data, id==input$country) %>%
+        mutate(daily_cases = confirmed - lag(confirmed, default=confirmed[1])) %>%
+        mutate(daily_cases_smoothed = moving_average(daily_cases)) %>%
+        mutate(daily_deaths = deaths - lag(deaths, default=deaths[1])) %>%
+        mutate(daily_deaths_smoothed = moving_average(daily_deaths))
+    })
+  
+    output$vbox1 <- renderValueBox({
+      data <- reactive_data()
+
+      hc <- data  %>%
+        hchart("line", hcaes(date, daily_cases_smoothed), name = "Cases Timeline")  %>%
+        hc_size(height = 100) %>%
+        hc_credits(enabled = FALSE) %>%
+        hc_add_theme(hc_theme_sparkline_vb())
+
+      total <- length(data$daily_cases_smoothed)
+      today <- data$daily_cases_smoothed[total]
+      week_back <- data$daily_cases_smoothed[total - 7]
+      percent_week <- round((today - week_back)/week_back * 100)
+
+      vb <- valueBoxSpark(
+        value = round(today),
+        title = toupper("Daily Cases"),
+        sparkobj = hc,
+        subtitle = tagList(arrow(percent_week), percent_week, "% Since last week"),
+        info = "Daily number of COVID cases",
+        width = 4,
+        color = "teal",
+        href = NULL
+      )
+
+      vb
+
+    })
+
+    output$vbox2 <- renderValueBox({
+      data <- reactive_data()
+
+      hc <- data  %>%
+        hchart("line", hcaes(date, daily_deaths_smoothed), name = "Deaths Timeline")  %>%
+        hc_size(height = 100) %>%
+        hc_credits(enabled = FALSE) %>%
+        hc_add_theme(hc_theme_sparkline_vb())
+
+      total <- length(data$daily_deaths_smoothed)
+      today <- data$daily_deaths_smoothed[total]
+      week_back <- data$daily_deaths_smoothed[total - 7]
+      percent_week <- round((today - week_back)/week_back * 100)
+
+      vb <- valueBoxSpark(
+        value = round(today),
+        title = toupper("Daily Deaths"),
+        sparkobj = hc,
+        subtitle = tagList(arrow(percent_week), percent_week, "% Since last week"),
+        info = "Daily number of COVID deaths",
+        width = 4,
+        color = "red",
+        href = NULL
+      )
+
+      vb
+
+    })
+
+    output$vbox3 <- renderValueBox({
+      data <- reactive_data()
+
+      hc <- data  %>%
+        hchart("line", hcaes(date, hosp), name = "Hospital Admissions Timeline")  %>%
+        hc_size(height = 100) %>%
+        hc_credits(enabled = FALSE) %>%
+        hc_add_theme(hc_theme_sparkline_vb())
+
+      total <- length(data$hosp)
+      today <- data$hosp[total]
+      week_back <- data$hosp[total - 7]
+      percent_week <- round((today - week_back)/week_back * 100)
+
+      vb <- valueBoxSpark(
+        value = round(today),
+        title = toupper("Hospital Admissions"),
+        sparkobj = hc,
+        subtitle = tagList(arrow(percent_week), percent_week, "% Since last week"),
+        info = "Number of COVID patients in hospital beds",
+        width = 4,
+        color = "yellow",
+        href = NULL
+      )
+
+      vb
+
+    })
+
     output$main_plot <- renderPlot({
-        data <- filter(all_data, id==input$country)
+        data <- reactive_data()
+        
         if (!is.null(display_restriction())){
           levels = data[[display_restriction()]]+1
           colors_label = unlist(restrictions_level_to_text[[display_restriction()]], recursive=FALSE)
@@ -219,8 +464,6 @@ server <- function(input, output) {
           colors = head(colors_name, length(colors_label))
           names(colors) = breaks
           plot <- data %>%
-            mutate(daily_cases = confirmed - lag(confirmed, default=confirmed[1])) %>%
-            mutate(daily_cases_smoothed = moving_average(daily_cases)) %>%
             ggplot(aes(x=date, y=daily_cases_smoothed, colour=factor(levels), 
                        group=c(0, cumsum(tail(levels != shift(levels, 1), -1))))) +
             geom_line(size=1.5) +
@@ -233,8 +476,6 @@ server <- function(input, output) {
                   axis.title=element_text(size=14))
         } else {
           plot <- data %>% 
-            mutate(daily_cases = confirmed - lag(confirmed, default=confirmed[1])) %>%
-            mutate(daily_cases_smoothed = moving_average(daily_cases)) %>%
             ggplot(aes(x=date, y=daily_cases_smoothed)) +
             geom_line(size=1.5) +
             xlab("Date") + ylab("Daily cases") +
@@ -242,14 +483,14 @@ server <- function(input, output) {
                   axis.title=element_text(size=14))
         }
         plot <- plot + 
-          geom_vline(aes(xintercept=input$mainPlotDate)) +
-          geom_text(aes(x=input$mainPlotDate, y = 0, label=input$mainPlotDate, hjust=1.2, vjust=1))
+          geom_vline(aes(xintercept=input$mainPlotDate), linetype = "dashed") +
+          annotate("text", x=input$mainPlotDate, y = 0, label=input$mainPlotDate, hjust=1.2, vjust=1, color='black')
         return(plot)
     })
     
     output$restrictions <- renderUI({
         categories = tagList()
-        data <- filter(all_data, id==input$country)
+        data <- reactive_data()
         date_row = filter(data, date==input$mainPlotDate)
         i = 1
         for (cat in names(restrictions_categories)){
@@ -270,57 +511,6 @@ server <- function(input, output) {
           i = i+1
         }
         categories
-    })
-    
-    output$forecasting <- renderPlot({
-        data <- filter(all_data, id==input$country)
-        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
-        Re_start_date = input$forecasting_start
-        Re_end_date = Re_start_date + input$forecasting_period
-
-        # Use JRC method to estimate R number from historic data
-        estimation_base = data %>% filter(date == as.POSIXct("2020-03-01")) %>% pull(confirmed)
-        base_case = data %>% filter(date == Re_start_date) %>% pull(confirmed)
-        R_number = log(base_case, estimation_base)**(1/(as.numeric(Re_start_date - as.Date("2020-03-01",format = "%Y-%m-%d"))/7))
-
-        plot = data %>%
-            filter(date < Re_end_date) %>% 
-            mutate(date = as.Date(date,format = "%Y-%m-%d")) %>%
-            mutate(roll = rollmean(confirmed, k=7, na.pad = TRUE, align = "center"))  %>%
-            mutate(forecasting = ifelse(date < Re_start_date, roll, as.integer(base_case*(R_number**(as.numeric(date-as.Date(Re_start_date))/7))))) %>%
-    ggplot(aes(x=date, y=confirmed)) + 
-            geom_point(size = 0.1) + 
-            geom_line(aes(y=forecasting), color = "red") +
-            geom_line(aes(y=roll)) +
-            geom_vline(xintercept = as.numeric(as.Date(Re_start_date, format = "%Y-%m-%d")), colour = "blue", size = 1) + 
-            theme(legend.position="none") + theme_bw() + labs(y="Daily New Cases")+
-            theme(axis.text.x = element_text(angle=45, hjust = 1)) + 
-            scale_x_date(date_breaks = "28 days")
-        
-        return(plot)
-      
-    })
-    
-    output$forecast_box <- renderInfoBox({
-        data <- filter(all_data, id==input$country)
-        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
-        Re_start_date = input$forecasting_start
-        Re_end_date = Re_start_date + input$forecasting_period
-
-        # Use JRC method to estimate R number from historic data
-        estimation_base = data %>% filter(date == as.POSIXct("2020-03-01")) %>% pull(confirmed)
-        base_case = data %>% filter(date == Re_start_date) %>% pull(confirmed)
-        R_number = log(base_case, estimation_base)**(1/(as.numeric(Re_start_date - as.Date("2020-03-01",format = "%Y-%m-%d"))/7))
-        
-        # forecast 
-        forecast_number = as.integer(base_case*(R_number**(input$forecasting_period/7)))
-        actual_number = data %>% filter(date == Re_end_date) %>% pull(confirmed)
-      
-        infoBox(
-          "Forecasting", paste0("Forecasting cases: ", forecast_number, "\nActual cases: ", actual_number, "\n Differ:", forecast_number - actual_number), icon = icon("analytics", lib = "glyphicon"),
-          color = "yellow", width = 20
-        )
-       
     })
     
     display_restriction <- reactiveVal(NULL)
@@ -344,6 +534,55 @@ server <- function(input, output) {
              }
       )
     })
+    
+    output$forecasting <- renderPlot({
+        data <- reactive_data()
+        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
+        Re_start_date = input$forecasting_start
+        Re_end_date = Re_start_date + input$forecasting_period
+        # Use JRC method to estimate R number from historic data
+        base_case = data %>% filter(date == Re_start_date) %>% pull(daily_cases_smoothed)
+        old_case = data %>% filter(date == Re_start_date - 14) %>% pull(daily_cases_smoothed)
+        R_number = exp((log(base_case) - log(old_case))/2)
+        data = data %>%
+          mutate(forecasting = ifelse(date < Re_start_date, 
+              daily_cases_smoothed, 
+              as.integer(base_case*(R_number**(as.numeric(date-Re_start_date)/7)))))
+        plot = data %>%
+            ggplot(aes(x=date, y=daily_cases_smoothed)) + 
+            geom_line(size=1.5) +
+            geom_line(aes(y=forecasting), color = "red", size=1.5, filter(data, date < Re_end_date & date > Re_start_date)) +
+            geom_vline(xintercept = as.numeric(as.Date(Re_start_date, format = "%Y-%m-%d")), colour = "black", linetype = 'dashed') + 
+            theme(legend.position="none") + theme_bw() +
+            xlab("Date") + ylab("Daily new cases") +
+            theme(axis.text=element_text(size=12),
+                  axis.title=element_text(size=14))
+        
+        return(plot)
+      
+    })
+    
+    output$forecast_box <- renderInfoBox({
+        data <- reactive_data()
+        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
+        Re_start_date = input$forecasting_start
+        Re_end_date = Re_start_date + input$forecasting_period
+        # Use JRC method to estimate R number from historic data
+        base_case = data %>% filter(date == Re_start_date) %>% pull(daily_cases_smoothed)
+        old_case = data %>% filter(date == Re_start_date - 14) %>% pull(daily_cases_smoothed)
+        R_number = exp((log(base_case) - log(old_case))/2)
+        
+        # forecast 
+        forecast_number = as.integer(base_case*(R_number**(input$forecasting_period/7)))
+        actual_number = data %>% filter(date == Re_end_date) %>% pull(daily_cases_smoothed)
+      
+        infoBox(
+          "Forecasting", paste0("Forecasting cases: ", forecast_number, "\nActual cases: ", actual_number, "\n Differ:", forecast_number - actual_number), icon = icon("analytics", lib = "glyphicon"),
+          color = "yellow", width = 20
+        )
+       
+    })
+    
 }
 ```
 
@@ -351,7 +590,6 @@ server <- function(input, output) {
 ```{r}
 shinyApp(ui, server)
 ```
-
 
 
 
