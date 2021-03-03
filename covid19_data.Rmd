@@ -288,7 +288,7 @@ body <- dashboardBody(
         id='mainplot',
         box(solidHeader = TRUE,
           status = "info",
-          title = "Governement measures over time",
+          title = "Government measures over time",
           div(
             dropdownButton(
                 tags$h3("Plot options"),
@@ -346,7 +346,7 @@ body <- dashboardBody(
           plotOutput("forecasting")
         )
       ),
-      infoBoxOutput("forecast_box")
+      uiOutput("forecast_box")
     )
   )
 )
@@ -562,9 +562,9 @@ server <- function(input, output) {
       
     })
     
-    output$forecast_box <- renderInfoBox({
+    output$forecast_box <- renderUI({
         data <- reactive_data()
-        # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
+ 
         Re_start_date = input$forecasting_start
         Re_end_date = Re_start_date + input$forecasting_period
         # Use JRC method to estimate R number from historic data
@@ -576,9 +576,19 @@ server <- function(input, output) {
         forecast_number = as.integer(base_case*(R_number**(input$forecasting_period/7)))
         actual_number = data %>% filter(date == Re_end_date) %>% pull(daily_cases_smoothed)
       
-        infoBox(
-          "Forecasting", paste0("Forecasting cases: ", forecast_number, "\nActual cases: ", actual_number, "\n Differ:", forecast_number - actual_number), icon = icon("analytics", lib = "glyphicon"),
-          color = "yellow", width = 20
+        list(
+          infoBox(
+          "Forecasting cases", paste0(" ", forecast_number), icon = shiny::icon("bar-chart"),
+          color = "olive", width = 5
+          ),
+          infoBox(
+          "Actual cases", paste0(" ", actual_number), icon = shiny::icon("bar-chart"),
+          color = "green", width = 5
+          ),
+          infoBox(
+          "Difference cases", paste0(" ", actual_number - forecast_number), icon = shiny::icon("bar-chart"),
+          color = "orange", width = 5
+          )
         )
        
     })
