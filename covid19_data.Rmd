@@ -1,6 +1,8 @@
 ---
 title: "R Notebook"
 output: html_notebook
+editor_options: 
+  chunk_output_type: inline
 ---
 
 
@@ -15,13 +17,36 @@ library(shinyWidgets)
 library(plotly)
 library(data.table)
 library(highcharter)
+library(shinycssloaders)
 library(zoo)
+```
+```{r}
+options(spinner.color="#0275D8", spinner.color.background="#ffffff", spinner.size=2)
+
 ```
 
 ```{r}
 data <- covid19(raw=FALSE, verbose=FALSE)
 glimpse(data)
 ```
+
+
+
+```{r}
+glimpse(data)
+```
+```{r}
+abbr <- c(unique(data$id))
+alias <- c(unique(data$administrative_area_level_1))
+```
+
+```{r}
+names(abbr) <- alias
+```
+```{r}
+abbr[1]
+```
+
 
 ```{r}
 subset_data <- data %>% filter(id=='CAN')
@@ -105,7 +130,6 @@ contact_tracing_text <- list(
   "No contact tracing",
   "Limited contact tracing",
   "Comprehensive contact tracing")
-
 restrictions_categories=list(
   "Lockdown"=list("stay_home_restrictions"),
   "Travel&Transport"=list("international_movement_restrictions", 
@@ -119,7 +143,6 @@ restrictions_categories=list(
   "Events&Gatherings"=list("cancel_events", 
                            "gathering_restrictions")
 )
-
 restrictions_level_to_text <- list(
     "school_closing"=school_closing_text,
     "workplace_closing"=workplace_closing_text,
@@ -133,14 +156,12 @@ restrictions_level_to_text <- list(
     "testing_policy"=testing_policy_text,
     "contact_tracing"=contact_tracing_text
 )
-
 colors = c("008000", "e6e6e6", "ffff66", "ff9900", "ff5050")
 colors_name = c("green", "gray", "yellow", "orange", "red")
 ```
 
 ```{r}
 all_data <- covid19(raw=FALSE, verbose=FALSE)
-
 moving_average <- function(x, n = 7){round(stats::filter(x, rep(1 / n, n), sides = 1))}
 ```
 
@@ -211,7 +232,6 @@ hc_theme_sparkline_vb <- function(...) {
     
     theme
 }
-
 valueBoxSpark <- function(value, title, sparkobj = NULL, subtitle, info = NULL, 
                           icon = NULL, color = "aqua", width = 4, href = NULL){
     
@@ -255,7 +275,6 @@ valueBoxSpark <- function(value, title, sparkobj = NULL, subtitle, info = NULL,
         boxContent
     )
 }
-
 arrow <- function(num) {
     if(num < 0){
         return(HTML("&darr;"))
@@ -263,23 +282,20 @@ arrow <- function(num) {
     else if(num>0){ return(HTML("&uarr;")) }
     else return(HTML("-"))
 }
-
 ```
 
 ```{r}
 header <- dashboardHeader()
-
 sidebar <- dashboardSidebar(
   collapsed = TRUE,
   sidebarMenu(),
   selectInput("country", "Select country",
-              choices=unique(data$id), selected="CAN"))
-
+              choices=abbr, selected="CAN"))
 body <- dashboardBody(
   useShinyjs(),
   fluidPage(
     fluidRow(
-      valueBoxOutput("vbox1"),
+      withSpinner(valueBoxOutput("vbox1"), image = 'https://drive.google.com/u/0/uc?id=1YLP6tzIv6sB4pVYWQy9fRcUqAd8AYAEn'),
       valueBoxOutput("vbox2"),
       valueBoxOutput("vbox3")
     ),
@@ -350,7 +366,6 @@ body <- dashboardBody(
     )
   )
 )
-
 ui <- dashboardPage(header, sidebar, body)
 ```
 
@@ -369,18 +384,15 @@ server <- function(input, output) {
   
     output$vbox1 <- renderValueBox({
       data <- reactive_data()
-
       hc <- data  %>%
         hchart("line", hcaes(date, daily_cases_smoothed), name = "Cases Timeline")  %>%
         hc_size(height = 100) %>%
         hc_credits(enabled = FALSE) %>%
         hc_add_theme(hc_theme_sparkline_vb())
-
       total <- length(data$daily_cases_smoothed)
       today <- data$daily_cases_smoothed[total]
       week_back <- data$daily_cases_smoothed[total - 7]
       percent_week <- round((today - week_back)/week_back * 100)
-
       vb <- valueBoxSpark(
         value = round(today),
         title = toupper("Daily Cases"),
@@ -391,25 +403,19 @@ server <- function(input, output) {
         color = "teal",
         href = NULL
       )
-
       vb
-
     })
-
     output$vbox2 <- renderValueBox({
       data <- reactive_data()
-
       hc <- data  %>%
         hchart("line", hcaes(date, daily_deaths_smoothed), name = "Deaths Timeline")  %>%
         hc_size(height = 100) %>%
         hc_credits(enabled = FALSE) %>%
         hc_add_theme(hc_theme_sparkline_vb())
-
       total <- length(data$daily_deaths_smoothed)
       today <- data$daily_deaths_smoothed[total]
       week_back <- data$daily_deaths_smoothed[total - 7]
       percent_week <- round((today - week_back)/week_back * 100)
-
       vb <- valueBoxSpark(
         value = round(today),
         title = toupper("Daily Deaths"),
@@ -420,25 +426,19 @@ server <- function(input, output) {
         color = "red",
         href = NULL
       )
-
       vb
-
     })
-
     output$vbox3 <- renderValueBox({
       data <- reactive_data()
-
       hc <- data  %>%
         hchart("line", hcaes(date, hosp), name = "Hospital Admissions Timeline")  %>%
         hc_size(height = 100) %>%
         hc_credits(enabled = FALSE) %>%
         hc_add_theme(hc_theme_sparkline_vb())
-
       total <- length(data$hosp)
       today <- data$hosp[total]
       week_back <- data$hosp[total - 7]
       percent_week <- round((today - week_back)/week_back * 100)
-
       vb <- valueBoxSpark(
         value = round(today),
         title = toupper("Hospital Admissions"),
@@ -449,11 +449,8 @@ server <- function(input, output) {
         color = "yellow",
         href = NULL
       )
-
       vb
-
     })
-
     output$main_plot <- renderPlot({
         data <- reactive_data()
         
@@ -600,13 +597,6 @@ server <- function(input, output) {
 ```{r}
 shinyApp(ui, server)
 ```
-
-
-
-
-
-
-
 
 
 
