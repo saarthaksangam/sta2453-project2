@@ -54,11 +54,11 @@ glimpse(subset_data)
 ```
 ```{r}
 statistics <- list(
-  "Daily cases" = "confirmed",
-  "Daily deaths" = "deaths",
-  "Daily tests" = "tests",
-  "Daily hospital admissions" = "hosp",
-  "Daily ICU admissions" = "icu"
+  "Daily cases" = "daily_cases_smoothed",
+  "Daily deaths" = "daily_deaths_smoothed",
+  "Daily tests" = "daily_tests_smoothed",
+  "Hospital patients" = "hosp",
+  "ICU patients" = "icu"
 )
 ```
 
@@ -295,7 +295,8 @@ body <- dashboardBody(
   useShinyjs(),
   fluidPage(
     fluidRow(
-      withSpinner(valueBoxOutput("vbox1"), image = 'https://drive.google.com/u/0/uc?id=1YLP6tzIv6sB4pVYWQy9fRcUqAd8AYAEn'),
+      # withSpinner(valueBoxOutput("vbox1"), image = 'https://drive.google.com/u/0/uc?id=1YLP6tzIv6sB4pVYWQy9fRcUqAd8AYAEn'),
+      valueBoxOutput("vbox1"),
       valueBoxOutput("vbox2"),
       valueBoxOutput("vbox3")
     ),
@@ -307,13 +308,16 @@ body <- dashboardBody(
           title = "Government measures over time",
           div(
             dropdownButton(
-                tags$h3("Plot options"),
+                tags$div(
+                  style = "color: black !important;", # for text
+                  h3("Plot options")
+                ),
                 selectInput(inputId = 'mainPlotY',
-                            label = 'Show evolution of ',
+                            label = shiny::HTML("<p><span style='color: black'>Show evolution of</span></p>"),
                             selected = "Daily cases",
-                            choices = c("Daily cases")),
+                            choices = names(statistics)),
                 dateInput(inputId = 'mainPlotDate',
-                          label = 'See restrictions on',
+                          label = shiny::HTML("<p><span style='color: black'>See restrictions on</span></p>"),
                           value = max(all_data$date),
                           min = min(all_data$date),
                           max = max(all_data$date)),
@@ -341,14 +345,17 @@ body <- dashboardBody(
           title = "Predictions",
           div(
             dropdownButton(
-                tags$h3("Plot options"),
+                tags$div(
+                  style = "color: black !important;", # for text
+                  h3("Plot options")
+                ),
                 dateInput("forecasting_start",
-                  "Forecasting start date:",
+                  shiny::HTML("<p><span style='color: black'> Forecasting start date: </span></p>"),
                   min = min(all_data$date),
                   max = max(all_data$date),
                   value = as.Date(max(all_data$date))-14),
                 sliderInput("forecasting_period",
-                  "Forecasting range:",
+                  shiny::HTML("<p><span style='color: black'>Forecasting range:</span></p>"),
                   min = 7,
                   max = 60,
                   value = 14),
@@ -379,7 +386,9 @@ server <- function(input, output) {
         mutate(daily_cases = confirmed - lag(confirmed, default=confirmed[1])) %>%
         mutate(daily_cases_smoothed = moving_average(daily_cases)) %>%
         mutate(daily_deaths = deaths - lag(deaths, default=deaths[1])) %>%
-        mutate(daily_deaths_smoothed = moving_average(daily_deaths))
+        mutate(daily_deaths_smoothed = moving_average(daily_deaths)) %>%
+        mutate(daily_tests = tests - lag(tests, default=deaths[1])) %>%
+        mutate(daily_tests_smoothed = moving_average(daily_tests))
     })
   
     output$vbox1 <- renderValueBox({
@@ -451,8 +460,11 @@ server <- function(input, output) {
       )
       vb
     })
+  
     output$main_plot <- renderPlot({
         data <- reactive_data()
+        data <- data %>%
+          mutate(to_show = data[[statistics[[input$mainPlotY]]]])
         
         if (!is.null(display_restriction())){
           levels = data[[display_restriction()]]+1
@@ -461,7 +473,7 @@ server <- function(input, output) {
           colors = head(colors_name, length(colors_label))
           names(colors) = breaks
           plot <- data %>%
-            ggplot(aes(x=date, y=daily_cases_smoothed, colour=factor(levels), 
+            ggplot(aes(x=date, y=to_show, colour=factor(levels), 
                        group=c(0, cumsum(tail(levels != shift(levels, 1), -1))))) +
             geom_line(size=1.5) +
             scale_colour_manual(values=colors, breaks=breaks , labels=colors_label, 
@@ -473,7 +485,7 @@ server <- function(input, output) {
                   axis.title=element_text(size=14))
         } else {
           plot <- data %>% 
-            ggplot(aes(x=date, y=daily_cases_smoothed)) +
+            ggplot(aes(x=date, y=to_show)) +
             geom_line(size=1.5) +
             xlab("Date") + ylab("Daily cases") +
             theme(axis.text=element_text(size=12),
@@ -537,19 +549,41 @@ server <- function(input, output) {
         # The date that you yant to choose, this date should be after 2020-03-01 to make good estimation 
         Re_start_date = input$forecasting_start
         Re_end_date = Re_start_date + input$forecasting_period
+        max_date = max(data$date)
         # Use JRC method to estimate R number from historic data
         base_case = data %>% filter(date == Re_start_date) %>% pull(daily_cases_smoothed)
         old_case = data %>% filter(date == Re_start_date - 14) %>% pull(daily_cases_smoothed)
         R_number = exp((log(base_case) - log(old_case))/2)
+
         data = data %>%
           mutate(forecasting = ifelse(date < Re_start_date, 
               daily_cases_smoothed, 
               as.integer(base_case*(R_number**(as.numeric(date-Re_start_date)/7)))))
-        plot = data %>%
-            ggplot(aes(x=date, y=daily_cases_smoothed)) + 
-            geom_line(size=1.5) +
-            geom_line(aes(y=forecasting), color = "red", size=1.5, filter(data, date < Re_end_date & date > Re_start_date)) +
+        if (Re_end_date <= max_date) { 
+          plot_data <- data.frame(
+            date = data$date,
+            daily_cases_smoothed = data$daily_cases_smoothed,
+            forecasting = ifelse(data$date < Re_start_date, 
+              data$daily_cases_smoothed, 
+              as.integer(base_case*(R_number**(as.numeric(data$date-Re_start_date)/7))))
+          )
+        } else {
+          dates =  c(data$date, seq(max_date, Re_end_date, "days"))
+          plot_data <- data.frame(
+            date = dates,
+            daily_cases_smoothed = c(data$daily_cases_smoothed, 
+                                     rep(0, length(dates)-length(data$daily_cases_smoothed))),
+            forecasting = ifelse(dates < Re_start_date, 
+              c(data$daily_cases_smoothed, rep(0, length(dates)-length(data$daily_cases_smoothed))), 
+              as.integer(base_case*(R_number**(as.numeric(dates-Re_start_date)/7))))
+          )
+        }
+        plot = plot_data %>%
+            ggplot(aes(x=date)) + 
+            geom_line(aes(y=daily_cases_smoothed), size=1.5, filter(data, date < max_date)) +
+            geom_line(aes(y=forecasting), color = "red", size=1.5, filter(plot_data, date < Re_end_date & date > Re_start_date)) +
             geom_vline(xintercept = as.numeric(as.Date(Re_start_date, format = "%Y-%m-%d")), colour = "black", linetype = 'dashed') + 
+            annotate("text", x=Re_start_date, y = 0, label=Re_start_date, hjust=1.2, vjust=1, color='black') +
             theme(legend.position="none") + theme_bw() +
             xlab("Date") + ylab("Daily new cases") +
             theme(axis.text=element_text(size=12),
@@ -564,6 +598,7 @@ server <- function(input, output) {
  
         Re_start_date = input$forecasting_start
         Re_end_date = Re_start_date + input$forecasting_period
+        max_date = max(data$date)
         # Use JRC method to estimate R number from historic data
         base_case = data %>% filter(date == Re_start_date) %>% pull(daily_cases_smoothed)
         old_case = data %>% filter(date == Re_start_date - 14) %>% pull(daily_cases_smoothed)
@@ -571,20 +606,30 @@ server <- function(input, output) {
         
         # forecast 
         forecast_number = as.integer(base_case*(R_number**(input$forecasting_period/7)))
-        actual_number = data %>% filter(date == Re_end_date) %>% pull(daily_cases_smoothed)
+        if (Re_end_date <= max_date) {
+          actual_number = data %>% filter(date == Re_end_date) %>% pull(daily_cases_smoothed)
+          difference = actual_number - forecast_number
+        } else {
+          actual_number = "No data"
+          difference = "No data"
+        }
       
         list(
           infoBox(
+          "R number", format(round(R_number, 2), nsmall = 2), icon = shiny::icon("bar-chart"),
+          color = ifelse(R_number > 1, "orange", "green"), width = 6
+          ),
+          infoBox(
           "Forecasting cases", paste0(" ", forecast_number), icon = shiny::icon("bar-chart"),
-          color = "olive", width = 5
+          color = "red", width = 6
           ),
           infoBox(
           "Actual cases", paste0(" ", actual_number), icon = shiny::icon("bar-chart"),
-          color = "green", width = 5
+          color = "black", width = 6
           ),
           infoBox(
-          "Difference cases", paste0(" ", actual_number - forecast_number), icon = shiny::icon("bar-chart"),
-          color = "orange", width = 5
+          "Difference cases", paste0(" ", difference), icon = shiny::icon("bar-chart"),
+          color = ifelse(difference > 0, "orange", "green"), width = 6
           )
         )
        
