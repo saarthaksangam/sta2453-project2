@@ -353,12 +353,12 @@ body <- dashboardBody(
                   shiny::HTML("<p><span style='color: black'> Forecasting start date: </span></p>"),
                   min = min(all_data$date),
                   max = max(all_data$date),
-                  value = as.Date(max(all_data$date))-14),
+                  value = as.Date(max(all_data$date))-30),
                 sliderInput("forecasting_period",
                   shiny::HTML("<p><span style='color: black'>Forecasting range:</span></p>"),
                   min = 7,
-                  max = 60,
-                  value = 14),
+                  max = 90,
+                  value = 30),
                 circle = FALSE,
                 icon = icon("cog"),
                 tooltip = tooltipOptions(title = "Click for plot options")
@@ -478,7 +478,7 @@ server <- function(input, output) {
             geom_line(size=1.5) +
             scale_colour_manual(values=colors, breaks=breaks , labels=colors_label, 
                                 name="Restrictions", drop=FALSE) +
-            xlab("Date") + ylab("Daily cases") +
+            xlab("Date") + ylab(input$mainPlotY) +
             theme(legend.position="bottom",
                   legend.text=element_text(size=12),
                   axis.text=element_text(size=12),
@@ -585,7 +585,7 @@ server <- function(input, output) {
             geom_vline(xintercept = as.numeric(as.Date(Re_start_date, format = "%Y-%m-%d")), colour = "black", linetype = 'dashed') + 
             annotate("text", x=Re_start_date, y = 0, label=Re_start_date, hjust=1.2, vjust=1, color='black') +
             theme(legend.position="none") + theme_bw() +
-            xlab("Date") + ylab("Daily new cases") +
+            xlab("Date") + ylab("Daily cases") +
             theme(axis.text=element_text(size=12),
                   axis.title=element_text(size=14))
         
@@ -628,7 +628,7 @@ server <- function(input, output) {
           color = "black", width = 6
           ),
           infoBox(
-          "Difference cases", paste0(" ", difference), icon = shiny::icon("bar-chart"),
+          "Difference", paste0(" ", difference), icon = shiny::icon("bar-chart"),
           color = ifelse(difference > 0, "orange", "green"), width = 6
           )
         )
