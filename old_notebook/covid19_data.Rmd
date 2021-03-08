@@ -20,6 +20,7 @@ library(highcharter)
 library(shinycssloaders)
 library(zoo)
 ```
+
 ```{r}
 options(spinner.color="#0275D8", spinner.color.background="#ffffff", spinner.size=2)
 
@@ -43,6 +44,7 @@ alias <- c(unique(data$administrative_area_level_1))
 ```{r}
 names(abbr) <- alias
 ```
+
 ```{r}
 abbr[1]
 ```
